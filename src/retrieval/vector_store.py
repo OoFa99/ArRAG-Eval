@@ -294,7 +294,7 @@ class PineConeStore:
         # Higher-ranked results (lower rank number) get higher scores
         for rank, result in enumerate(semantic_results):
             doc_id = result['id']
-            rrf_score = 1 / (rank + k)  # RRF score for this ranking position
+            rrf_score = 1 / (rank + k + 1)  # RRF score for this ranking position
             rrf_scores[doc_id] = {"text": result['text'], "score": rrf_score}
 
         # Process BM25 results: add scores to existing entries or create new ones

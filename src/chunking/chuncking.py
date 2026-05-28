@@ -1,5 +1,5 @@
-from git import List
-from sympy import re
+from typing import List
+import re
 import numpy as np
 from numpy.typing import NDArray
 
