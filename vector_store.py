@@ -1,11 +1,12 @@
 from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone, ServerlessSpec
+from rank_bm25 import BM25Okapi
 
 class PineConeStore:
-    def __init__(self, api_key: str, index_name: str, model_name: str):
+    def __init__(self, api_key: str, index_name: str, model_name: str = "intfloat/multilingual-e5-small"):
         """
-        Initialize the embedding model and connect to the Pinecone index.
+        Initialize the embedding model and connect to the Pinecone index + BM25 support.
         """
         print(f"Loading embedding model: {model_name}...")
         self.model = SentenceTransformer(model_name)
@@ -31,33 +32,47 @@ class PineConeStore:
             
         self.index = self.pc.Index(self.index_name)
         
+        # BM25 components
+        self.bm25 = None
+        self.corpus = []          # Store raw chunks for BM25
+        self.corpus_ids = []      # Store corresponding ids for BM25
+        
     def add_documents(self, chunks: List[str], document_id: str):
-        """
-            Convert chunks to vectors and upsert them to Pinecone with metadata.
-        """
+        """Add documents to both Pinecone (semantic) and BM25 (keyword)."""
         if not chunks:
             return
-                
-        print(f"Generating embeddings for {len(chunks)} chunks...")
-        embeddings = self.model.encode(chunks)
+
+        print(f"Adding {len(chunks)} chunks for document: {document_id}")
+
+        # 1. Semantic Indexing (Pinecone)
+        embeddings = self.model.encode(chunks, normalize_embeddings=True)
         
-        # Format data for Pinecone: list of tuples (id, vector, metadata)
         vectors_to_upsert = []
         for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
             chunk_id = f"{document_id}_chunk_{i}"
             metadata = {"text": chunk, "source_document": document_id}
-            
-            # Embeddings must be converted from numpy arrays to standard Python lists
             vectors_to_upsert.append((chunk_id, emb.tolist(), metadata))
-        
-        # Upsert in batches (recommended practice for APIs)
+
+        # Batch upsert
         batch_size = 100
-        print("Upserting vectors to Pinecone...")
         for i in range(0, len(vectors_to_upsert), batch_size):
-            batch = vectors_to_upsert[i:i + batch_size]
-            self.index.upsert(vectors=batch)
-            
-        print("Indexing complete.")
+            self.index.upsert(vectors=vectors_to_upsert[i:i + batch_size])
+
+        # 2. BM25 Indexing
+        self.corpus.extend(chunks)
+        self.corpus_ids.extend([f"{document_id}_chunk_{i}" for i in range(len(chunks))])
+        
+        # Rebuild BM25 (simple approach)
+        tokenized_corpus = [self._tokenize_arabic(chunk) for chunk in self.corpus]
+        self.bm25 = BM25Okapi(tokenized_corpus)
+
+        print(f"✅ Successfully added {len(chunks)} chunks.")
+        
+    def _tokenize_arabic(self, text: str) -> List[str]:
+        """Simple Arabic tokenizer (can be improved with more sophisticated libraries)."""
+        # Basic cleanup and splitting - can be enhanced with libraries like Farasa or Camel Tools
+        tokens = text.lower().replace('\n', ' ').split()
+        return tokens
         
     def query(self, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
