@@ -82,4 +82,47 @@ class JudgeCache:
         Returns:
             Cached result or None
         """
+        query_hash = self._hash_query(decision_type, input_text)
         
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT result FROM judge_cache
+                WHERE query_hash = ? AND decision_type = ?
+            """, (query_hash, decision_type)
+            )
+            
+            row = cursor.fetchone()
+            if row:
+                return json.loads(row[0])
+        
+        return None
+    
+    def set(self, decision_type: str, input_text: str, result: Any) -> None:
+        """
+        Store result in cache.
+        
+        Args:
+            decision_type: Type of decision (e.g., "is_supported")
+            input_text: The input (claim, chunk, etc.)
+            result: The result to cache
+        """
+        query_hash = self._hash_query(decision_type, input_text)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO judge_cache 
+                (query_hash, decision_type, input_text, result)
+                VALUES (?, ?, ?, ?)
+            """, (query_hash, decision_type, input_text, json.dumps(result))
+            )
+            conn.commit()
+            
+    def clear(self) -> None:
+        """Clear the cache."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM judge_cache")
+            conn.commit()
+            
+    
