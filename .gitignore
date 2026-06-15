@@ -15,3 +15,5 @@ logs/
 # Ignore IDE-specific files
 .idea/
 .vscode/
+
+refrences/**
