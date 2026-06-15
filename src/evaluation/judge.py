@@ -415,3 +415,120 @@ Respond ONLY with valid JSON:
         Returns:
             True if relevant, False otherwise
         """
+        # Check cache
+        if self.cache:
+            cache_key = f"{question}|{chunk[:500]}|{answer[:500]}"
+            cached = self.cache.get("is_chunk_relevant", cache_key)
+            if cached is not None:
+                return cached.get("relevant", False)
+        
+        # Format prompt
+        prompt = self.prompts["chunk_relevance"].format(
+            question=question,
+            answer=answer,
+            chunk=chunk
+        )
+        
+        # Call LLM
+        response = self._call_llm(prompt)
+        parsed = self._parse_json_response(response)
+        
+        if parsed is None:
+            logger.warning(f"Failed to parse chunk relevance response")
+            return False
+        
+        relevant = parsed.get("relevant", False)
+        
+        # Cache result
+        if self.cache:
+            self.cache.set(
+                "is_chunk_relevant",
+                f"{question}|{chunk[:500]}|{answer[:500]}",
+                {"relevant": relevant}
+            )
+        
+        return relevant
+    
+    def decompose_claims(self, answer: str) -> List[str]:
+        """
+        Break an answer into atomic claims.
+        
+        Args:
+            answer: The answer to decompose
+        
+        Returns:
+            List of claims
+        """
+        # Check cache
+        if self.cache:
+            cached = self.cache.get("decompose_claims", answer[:500])
+            if cached is not None:
+                return cached.get("claims", [])
+            
+        # Format prompt
+        prompt = self.prompts["decompose_claims"].format(answer=answer)
+        
+        # Call LLM
+        response = self._call_llm(prompt)
+        parsed = self._parse_json_response(response)
+        
+        if parsed is None:
+            logger.warning(f"Failed to decompose answer into claims")
+            return [answer]  # Fallback: return as single claim
+        
+        claims = parsed.get("claims", [answer])
+        
+        # Cache result
+        if self.cache:
+            self.cache.set(
+                "decompose_claims",
+                answer[:500],
+                {"claims": claims}
+            )
+        
+        return claims
+    
+    def generate_questions(self, answer: str, num_questions: int = 3) -> List[str]:
+        """
+        Generate questions that could result in this answer.
+        
+        Args:
+            answer: The answer
+            num_questions: How many questions to generate
+        
+        Returns:
+            List of generated questions
+        """
+        # Check cache
+        if self.cache:
+            cache_key = f"{answer[:500]}|num={num_questions}"
+            cached = self.cache.get("generate_questions", cache_key)
+            if cached is not None:
+                return cached.get("questions", [])
+        
+        # Format prompt
+        prompt = self.prompts["generate_questions"].format(
+            answer=answer,
+            num_questions=num_questions
+        )
+        
+        # Call LLM
+        response = self._call_llm(prompt)
+        parsed = self._parse_json_response(response)
+        
+        if parsed is None:
+            logger.warning(f"Failed to generate questions")
+            return []
+        
+        questions = parsed.get("questions", [])
+        
+        # Cache result
+        if self.cache:
+            self.cache.set(
+                "generate_questions",
+                f"{answer[:500]}|num={num_questions}",
+                {"questions": questions}
+            )
+        
+        return questions
+    
