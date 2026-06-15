@@ -307,42 +307,111 @@ Respond ONLY with valid JSON:
 {{"questions": ["question 1", "question 2", ...]}}"""
             }
             
-def _call_llm(self, prompt: str, retries: int = 2) -> Optional[str]:
-    """
-    Call the LLM with retry logic.
-        
-    Args:
-        prompt: The prompt to send
-        retries: Number of retry attempts
-        
-    Returns:
-        LLM response or None if failed
-    """
-    for attempt in range(retries):
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=500,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.content[0].text
-        except APIError as e:
-            logger.error(f"LLM API error on attempt {attempt + 1}: {e}")
-            if attempt == retries - 1:
-                return None
-    return None
-
-def _parse_json_response(self, response: str) -> Optional[dict]:
-    """
-    Parse LLM response as JSON.
-    
-    Args:
-        response: The raw LLM response string
-    
-    Returns:
-        Parsed JSON as dict or None if parsing fails
-    """
-    if not response:
+    def _call_llm(self, prompt: str, retries: int = 2) -> Optional[str]:
+        """
+        Call the LLM with retry logic.
+            
+        Args:
+            prompt: The prompt to send
+            retries: Number of retry attempts
+            
+        Returns:
+            LLM response or None if failed
+        """
+        for attempt in range(retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=500,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                return response.content[0].text
+            except APIError as e:
+                logger.error(f"LLM API error on attempt {attempt + 1}: {e}")
+                if attempt == retries - 1:
+                    return None
         return None
+
+    def _parse_json_response(self, response: str) -> Optional[dict]:
+        """
+        Parse LLM response as JSON.
+        
+        Args:
+            response: The raw LLM response string
+        
+        Returns:
+            Parsed JSON as dict or None if parsing fails
+        """
+        if not response:
+            return None
+        
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError as e:
+            import re
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group(1))
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON from LLM response: {response[:200]}")
+                    return None
+        
+        return None
+
+    def is_claim_supported(self, claim: str, context: str) -> bool:
+        """
+        Determine if a claim is supported by context.
+            
+        Args:
+            claim: The claim to check
+            context: The retrieved context
+            
+        Returns:
+            True if supported, False otherwise
+        """
+        # Check cache first
+        if self.cache:
+            cached = self.cache.get("is_claim_supported", f"{claim}|{context[:500]}")
+            if cached is not None:
+                return cached.get("supported", False)
+            
+        # Generate prompt
+        prompt = self.prompts["claim_support"].format(
+            question="",
+            claim=claim,
+            context=context
+        )
+        
+        # Call LLM
+        response = self._call_llm(prompt)
+        parsed = self._parse_json_response(response)
+        
+        if parsed is None:
+            logger.warning(f"Failed to parse claim support response")
+            return False
+        
+        supported = parsed.get("supported", False)
+        
+        # Cache result
+        if self.cache:
+            self.cache.set(
+                "is_claim_supported",
+                f"{claim}|{context[:500]}",
+                {"supported": supported}
+            )
+        
+        return supported
     
-    
+    def is_chunk_relevant(self, chunk: str, question: str, answer: str) -> bool:
+        """
+        Determine if a chunk is relevant to the answer.
+        
+        Args:
+            question: The question
+            chunk: The retrieved chunk
+            answer: The generated answer
+        
+        Returns:
+            True if relevant, False otherwise
+        """
