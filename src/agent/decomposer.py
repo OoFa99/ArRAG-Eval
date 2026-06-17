@@ -13,7 +13,7 @@ import re
 from typing import List, Optional
 from enum import Enum
 
-from openai import OpenAI, APIError
+import google.generativeai as genai
 import logging
 
 logger = logging.getLogger(__name__)
@@ -102,19 +102,19 @@ class QueryDecomposer:
     
     def __init__(self, 
                  api_key: str,
-                 model: str = "gpt-4o-mini",
+                 model: str = "gemini-3.5-flash",
                  language: str = "ar",
                  max_retries: int = 2):
         """
         Initialize the QueryDecomposer.
         
         Args:
-            api_key (str): OpenAI API key
-            model (str): Model to use. Defaults to "gpt-4o-mini" (cheap + fast)
+            api_key (str): Google Generative AI API key
+            model (str): Model to use. Defaults to "gemini-3.5-flash" (fast + efficient)
             language (str): Language of queries. "ar" for Arabic, "en" for English
             max_retries (int): Number of retries on JSON parse failure
         """
-        self.client = OpenAI(api_key=api_key)
+        genai.configure(api_key=api_key)
         self.model = model
         self.language = language
         self.max_retries = max_retries
@@ -234,22 +234,20 @@ Respond with ONLY valid JSON:
             try:
                 logger.info(f"Decomposing query (attempt {attempt + 1}/{self.max_retries}): {query}")
                 
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=500,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": self.prompts["system"]
-                        },
-                        {
-                            "role": "user",
-                            "content": self.prompts["user"].format(question=query)
-                        }
-                    ]
+                model = genai.GenerativeModel(
+                    model_name=self.model,
+                    system_instruction=self.prompts["system"]
                 )
                 
-                response_text = response.content[0].text
+                response = model.generate_content(
+                    self.prompts["user"].format(question=query),
+                    generation_config=genai.types.GenerationConfig(
+                        max_output_tokens=500,
+                        temperature=0.1
+                    )
+                )
+                
+                response_text = response.text
                 sub_queries = self._parse_json_response(response_text)
                 
                 if sub_queries:
@@ -259,7 +257,7 @@ Respond with ONLY valid JSON:
                 # Parse failed, will retry
                 logger.warning(f"Failed to parse JSON response: {response_text[:200]}")
                 
-            except APIError as e:
+            except Exception as e:
                 logger.error(f"API error on attempt {attempt + 1}: {e}")
                 if attempt == self.max_retries - 1:
                     raise

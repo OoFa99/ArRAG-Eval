@@ -24,7 +24,7 @@ import sqlite3
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import hashlib
-from openai import OpenAI, APIError
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ class LLMJudge:
     
     def __init__(self,
                  api_key: str,
-                 model: str = "gpt-40-mini",
+                 model: str = "gemini-3.5-flash",
                  language: str = "ar",
                  use_cache: bool = True,
                  cache_dir: str = ".cache"):
@@ -156,13 +156,13 @@ class LLMJudge:
         Initialize LLM judge.
         
         Args:
-            api_key: OpenAI API key
-            model: Model to use (gpt-4o-mini or gpt-4o recommended)
+            api_key: Google Generative AI API key
+            model: Model to use (gemini-3.5-flash recommended)
             language: "ar" for Arabic, "en" for English
             use_cache: Whether to cache judge decisions
             cache_dir: Directory for cache database
         """
-        self.client = OpenAI(api_key=api_key)
+        genai.configure(api_key=api_key)
         self.model = model
         self.language = language
         self.use_cache = use_cache
@@ -320,13 +320,16 @@ Respond ONLY with valid JSON:
         """
         for attempt in range(retries):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    max_tokens=500,
-                    messages=[{"role": "user", "content": prompt}]
+                model = genai.GenerativeModel(model_name=self.model)
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        max_output_tokens=500,
+                        temperature=0.1
+                    )
                 )
-                return response.content[0].text
-            except APIError as e:
+                return response.text
+            except Exception as e:
                 logger.error(f"LLM API error on attempt {attempt + 1}: {e}")
                 if attempt == retries - 1:
                     return None

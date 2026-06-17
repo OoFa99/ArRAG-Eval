@@ -12,9 +12,10 @@ Orchestrates the end-to-end flow:
 from typing import TypedDict, List, Dict, Any, Optional
 from dataclasses import dataclass
 import logging
+import json
 
 from langgraph.graph import StateGraph, END
-from openai import OpenAI
+import google.generativeai as genai
 
 from src.agent.decomposer import QueryDecomposer, decompose_query
 from src.config import ExperimentConfig
@@ -195,15 +196,17 @@ Respond in JSON format:
 {{"is_sufficient": true/false, "missing_info": "what is missing, or 'nothing' if complete"}}"""
     
     try:
-        client = OpenAI(api_key=api_key)
-        response = client.messages.create(
-            model="gpt-4o-mini",
-            max_tokens=200,
-            messages=[{"role": "user", "content": sufficiency_prompt}]
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name="gemini-3.5-flash")
+        response = model.generate_content(
+            sufficiency_prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=200,
+                temperature=0.1
+            )
         )
         
-        import json
-        response_text = response.content[0].text
+        response_text = response.text
         parsed = json.loads(response_text)
         is_sufficient = parsed.get("is_sufficient", False)
         missing = parsed.get("missing_info", "unknown")
@@ -265,11 +268,14 @@ Answer:"""
     logger.info("Generating answer from context")
     
     try:
-        client = OpenAI(api_key=api_key)
-        response = client.messages.create(
-            model=config.llm_model,
-            max_tokens=500,
-            messages=[{"role": "user", "content": generation_prompt}]
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name="gemini-3.5-flash")
+        response = model.generate_content(
+            generation_prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=500,
+                temperature=0.7
+            )
         )
         
         answer = response.content[0].text.strip()
