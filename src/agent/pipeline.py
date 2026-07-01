@@ -278,7 +278,7 @@ Answer:"""
             )
         )
         
-        answer = response.content[0].text.strip()
+        answer = response.text.strip()
         logger.info(f"Generated answer: {answer[:200]}...")
         
     except Exception as e:

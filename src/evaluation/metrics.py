@@ -95,7 +95,7 @@ class Faithfulness:
         context_text = "\n---\n".join(context)
         
         # Step 1: Decompose answer into claims
-        claims = self.judge.decompose_into_claims(answer)
+        claims = self.judge.decompose_claims(answer)
         
         if not claims:
             logger.warning(f"Could not decompose answer into claims: {answer[:100]}")
@@ -210,7 +210,7 @@ class AnswerRelevance:
             )
         
         # Step 1: Generate questions from answer
-        generated_questions = judge.generate_questions_from_answer(
+        generated_questions = judge.generate_questions(
             answer=answer,
             num_questions=self.num_generated_questions
         )

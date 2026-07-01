@@ -89,6 +89,28 @@ class PineConeStore:
             return
 
         print(f"Adding {len(chunks)} chunks for document: {document_id}")
+        
+        # === IDEMPOTENCY CHECK ===
+        try:
+            stats = self.index.describe_index_stats()
+            total_vectors = stats.get('total_vector_count', 0)
+            
+            # Simple but effective check for this corpus
+            # You can make it more robust by querying a few IDs
+            if total_vectors > 0:
+                # Optional: check if this specific document already exists
+                sample_id = f"{document_id}_chunk_0"
+                try:
+                    fetch_result = self.index.fetch(ids=[sample_id])
+                    if sample_id in fetch_result.get('vectors', {}):
+                        print(f"✅ Document '{document_id}' already exists in index. Skipping add_documents.")
+                        return
+                except Exception:
+                    pass  # fallback to total count
+                    
+            print(f"Index currently has {total_vectors} vectors. Proceeding with upsert...")
+        except Exception as e:
+            print(f"Warning: Could not check index stats: {e}")
 
         # 1. Semantic Indexing (Pinecone)
         embeddings = self.model.encode(chunks, normalize_embeddings=True)
