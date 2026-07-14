@@ -16,7 +16,13 @@ logs/
 .idea/
 .vscode/
 
-refrences/**
+# Ignore data and model files
+data/**
+references/**
+mlruns/**
 
 .env
+*.db
+*.json
+*.txt
 .cache/
