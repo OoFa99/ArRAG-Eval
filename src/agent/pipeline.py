@@ -10,14 +10,13 @@ Orchestrates the end-to-end flow:
 """
 
 from typing import TypedDict, List, Dict, Any, Optional
-from dataclasses import dataclass
 import logging
-import json
 
 from langgraph.graph import StateGraph, END
-import google.generativeai as genai
 
-from src.agent.decomposer import QueryDecomposer, decompose_query
+import src.config
+from src.agent.decomposer import decompose_query
+from src.agent.ollama_client import generate_json, generate_text, OllamaGenerationError
 from src.config import ExperimentConfig
 
 logger = logging.getLogger(__name__)
@@ -61,7 +60,7 @@ class PipelineState(TypedDict):
 
 # ============ Node Functions ============
 
-def decompose_node(state: PipelineState, config: ExperimentConfig, api_key: str) -> PipelineState:
+def decompose_node(state: PipelineState, config: ExperimentConfig) -> PipelineState:
     """
     Node 1: Decompose complex questions into sub-queries.
     
@@ -89,8 +88,8 @@ def decompose_node(state: PipelineState, config: ExperimentConfig, api_key: str)
     logger.info(f"Decomposing question: {question}")
     sub_queries = decompose_query(
         query=question,
-        api_key=api_key,
         language=config.language,
+        model=config.llm_model,
         auto_detect=True  # Auto-detect simple vs. complex
     )
     
@@ -106,7 +105,7 @@ def decompose_node(state: PipelineState, config: ExperimentConfig, api_key: str)
     }
 
 
-def retrieve_node(state: PipelineState, vector_store) -> PipelineState:
+def retrieve_node(state: PipelineState, vector_store, config: ExperimentConfig) -> PipelineState:
     """
     Node 2: Retrieve chunks for each sub-query.
     
@@ -121,10 +120,20 @@ def retrieve_node(state: PipelineState, vector_store) -> PipelineState:
     all_chunks = []
     
     for sub_query in sub_queries:
-        logger.info(f"Retrieving for sub-query: {sub_query}")
+        logger.info(f"Retrieving for sub-query: {sub_query}"
+                    f"(retriever={config.retriever_type}, top_k={config.top_k})"
+        )
         
         # Call vector store's hybrid_query (already includes dense + bm25 + RRF)
-        chunks = vector_store.hybrid_query(sub_query, top_k=10)
+        if config.retriever_type == "dense":
+            chunks = vector_store.query(sub_query, top_k=config.top_k)
+        elif config.retriever_type == "bm25":
+            chunks = vector_store.bm25_query(sub_query, top_k=config.top_k)
+        elif config.retriever_type == "hybrid":
+            chunks = vector_store.hybrid_query(sub_query, top_k=config.top_k, k=config.rrf_k)
+        else:
+            raise ValueError(f"Unknown retriever_type: {config.retriever_type!r}")        
+        
         all_chunks.extend(chunks)
         
         logger.info(f"Retrieved {len(chunks)} chunks")
@@ -146,7 +155,7 @@ def retrieve_node(state: PipelineState, vector_store) -> PipelineState:
     }
 
 
-def check_sufficiency_node(state: PipelineState, api_key: str, config: ExperimentConfig) -> PipelineState:
+def check_sufficiency_node(state: PipelineState, config: ExperimentConfig) -> PipelineState:
     """
     Node 3: Check if retrieved context is sufficient to answer the question.
     
@@ -196,18 +205,16 @@ Respond in JSON format:
 {{"is_sufficient": true/false, "missing_info": "what is missing, or 'nothing' if complete"}}"""
     
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name="gemini-3.5-flash")
-        response = model.generate_content(
-            sufficiency_prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=200,
-                temperature=0.1
-            )
+        parsed = generate_json(
+            prompt=sufficiency_prompt,
+            model=config.llm_model,
+            max_tokens=200,
+            temperature=0.1,
         )
-        
-        response_text = response.text
-        parsed = json.loads(response_text)
+
+        if parsed is None:
+            raise OllamaGenerationError("Model did not return parseable JSON")
+
         is_sufficient = parsed.get("is_sufficient", False)
         missing = parsed.get("missing_info", "unknown")
         
@@ -235,7 +242,7 @@ Respond in JSON format:
     }
 
 
-def generate_node(state: PipelineState, api_key: str, config: ExperimentConfig) -> PipelineState:
+def generate_node(state: PipelineState, config: ExperimentConfig) -> PipelineState:
     """
     Node 4: Generate answer from retrieved context.
     
@@ -268,20 +275,15 @@ Answer:"""
     logger.info("Generating answer from context")
     
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name="gemini-3.5-flash")
-        response = model.generate_content(
-            generation_prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=500,
-                temperature=0.7
-            )
-        )
-        
-        answer = response.text.strip()
+        answer = generate_text(
+            prompt=generation_prompt,
+            model=config.llm_model,
+            max_tokens=500,
+            temperature=0.7,
+        ).strip()
         logger.info(f"Generated answer: {answer[:200]}...")
         
-    except Exception as e:
+    except OllamaGenerationError as e:
         logger.error(f"Generation failed: {e}")
         answer = "Error: Could not generate answer"
     
@@ -292,7 +294,7 @@ Answer:"""
     }
 
 
-def evaluate_node(state: PipelineState, api_key: str) -> PipelineState:
+def evaluate_node(state: PipelineState) -> PipelineState:
     """
     Node 5: Evaluate the answer using metrics.
     
@@ -308,11 +310,10 @@ def evaluate_node(state: PipelineState, api_key: str) -> PipelineState:
     logger.info("Evaluation step (placeholder — full metrics TBD)")
     
     # In the full implementation:
-    # from src.evaluation.metrics import compute_faithfulness, compute_answer_relevance
-    # scores = {
-    #     "faithfulness": compute_faithfulness(state["answer"], state["all_retrieved_chunks"], api_key),
-    #     "answer_relevance": compute_answer_relevance(state["question"], state["answer"]),
-    # }
+    # from src.evaluation.metrics import RAGEvaluator
+    # evaluator = RAGEvaluator(judge=my_judge)
+    # scores = evaluator.evaluate(question, [c["text"] for c in state["all_retrieved_chunks"]], state["answer"])
+    
     
     # For now, return placeholder scores
     scores = {
@@ -357,19 +358,16 @@ class ArRAGPipeline:
     
     def __init__(self, 
                  config: ExperimentConfig,
-                 vector_store,
-                 api_key: str):
+                 vector_store):
         """
         Initialize the pipeline.
         
         Args:
             config (ExperimentConfig): Experiment configuration
             vector_store: Vector store instance (must have hybrid_query method)
-            api_key (str): OpenAI API key for LLM calls
         """
         self.config = config
         self.vector_store = vector_store
-        self.api_key = api_key
         
         # Build the graph
         self.graph = self._build_graph()
@@ -381,27 +379,27 @@ class ArRAGPipeline:
         # Add nodes
         workflow.add_node(
             "decompose",
-            lambda state: decompose_node(state, self.config, self.api_key)
+            lambda state: decompose_node(state, self.config)
         )
         
         workflow.add_node(
             "retrieve",
-            lambda state: retrieve_node(state, self.vector_store)
+            lambda state: retrieve_node(state, self.vector_store, self.config)
         )
         
         workflow.add_node(
             "check_sufficiency",
-            lambda state: check_sufficiency_node(state, self.api_key, self.config)
+            lambda state: check_sufficiency_node(state, self.config)
         )
         
         workflow.add_node(
             "generate",
-            lambda state: generate_node(state, self.api_key, self.config)
+            lambda state: generate_node(state, self.config)
         )
         
         workflow.add_node(
             "evaluate",
-            lambda state: evaluate_node(state, self.api_key)
+            lambda state: evaluate_node(state)
         )
         
         # Define flow
@@ -436,7 +434,7 @@ class ArRAGPipeline:
             Dict containing: question, sub_queries, answer, retrieved_chunks, evaluation_scores
         
         Example:
-            >>> pipeline = ArRAGPipeline(config, vector_store, api_key)
+            >>> pipeline = ArRAGPipeline(config, vector_store)
             >>> result = pipeline.run("What is machine learning?")
             >>> print(result["answer"])
         """

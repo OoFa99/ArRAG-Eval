@@ -3,21 +3,17 @@ Query decomposition module for breaking complex questions into atomic sub-querie
 
 This module handles:
 - Detecting whether decomposition is needed (simple vs. complex questions)
-- Using an LLM to decompose complex questions into sub-queries
-- JSON parsing with retry logic
+- Using a local Ollama LLM to decompose complex questions into sub-queries
+- JSON-mode generation (no more markdown-fence / regex parsing)
 - Fallback behavior for malformed outputs
 """
 
-import json
-import re
+from src.agent.ollama_client import generate_json, DEFAULT_MODEL, OllamaGenerationError
 from typing import List, Optional
 from enum import Enum
-
-import google.generativeai as genai
 import logging
 
 logger = logging.getLogger(__name__)
-
 
 class QueryComplexity(Enum):
     """Enum for query complexity levels."""
@@ -88,7 +84,7 @@ def detect_query_complexity(query: str) -> QueryComplexity:
 
 class QueryDecomposer:
     """
-    Decomposes complex questions into atomic sub-queries using an LLM.
+    Decomposes complex questions into atomic sub-queries using a local Ollama LLM.
     
     Example:
         >>> decomposer = QueryDecomposer(api_key="sk-...", language="ar")
@@ -101,21 +97,23 @@ class QueryDecomposer:
     """
     
     def __init__(self, 
-                 api_key: str,
-                 model: str = "gemini-3.5-flash",
+                 model: str = DEFAULT_MODEL,
+                 host: Optional[str] = None,
                  language: str = "ar",
                  max_retries: int = 2):
         """
         Initialize the QueryDecomposer.
         
         Args:
-            api_key (str): Google Generative AI API key
-            model (str): Model to use. Defaults to "gemini-3.5-flash" (fast + efficient)
+            model (str): Ollama model tag to use. Defaults to "qwen3:4b"
+                        (fits comfortably in 4GB VRAM).
+            host (Optional[str]): Ollama server URL. Defaults to the
+                        ollama_client module default (http://localhost:11434).
             language (str): Language of queries. "ar" for Arabic, "en" for English
-            max_retries (int): Number of retries on JSON parse failure
+            max_retries (int): Number of retries on generation/parse failure
         """
-        genai.configure(api_key=api_key)
         self.model = model
+        self.host = host
         self.language = language
         self.max_retries = max_retries
         
@@ -161,39 +159,29 @@ Respond with ONLY valid JSON:
 {{"sub_queries": ["sub-question 1", "sub-question 2", ...]}}"""
             }
     
-    def _parse_json_response(self, response_text: str) -> Optional[List[str]]:
+    def _validate_sub_queries(self, parsed: Optional[dict]) -> Optional[List[str]]:
         """
-        Parse JSON response from the LLM, with error handling.
-        
-        Handles:
-        - Markdown-wrapped JSON (```json ... ```)
-        - Missing outer braces
-        - Malformed JSON
-        
+        Validate and clean a parsed JSON response into a sub-queries list.
+
         Args:
-            response_text (str): Raw LLM response
-        
+            parsed (Optional[dict]): Already-parsed JSON dict from the LLM
+                        (or None if generation/parsing failed upstream).
+
         Returns:
-            Optional[List[str]]: Parsed sub-queries, or None if parse fails
+            Optional[List[str]]: Cleaned sub-queries, or None if invalid/empty.
         """
-        # Try to extract JSON from markdown code blocks
-        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
-        if json_match:
-            response_text = json_match.group(1)
-        
-        try:
-            parsed = json.loads(response_text)
-            sub_queries = parsed.get("sub_queries", [])
-            
-            # Validate: must be non-empty list of strings
-            if isinstance(sub_queries, list) and all(isinstance(q, str) for q in sub_queries):
-                # Filter empty strings
-                sub_queries = [q.strip() for q in sub_queries if q.strip()]
-                if sub_queries:
-                    return sub_queries
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse error: {e}. Response: {response_text[:200]}")
-        
+        if not parsed:
+            return None
+
+        sub_queries = parsed.get("sub_queries", [])
+
+        # Validate: must be a list of strings
+        if isinstance(sub_queries, list) and all(isinstance(q, str) for q in sub_queries):
+            # Filter empty strings
+            sub_queries = [q.strip() for q in sub_queries if q.strip()]
+            if sub_queries:
+                return sub_queries
+
         return None
     
     def decompose(self, 
@@ -218,7 +206,7 @@ Respond with ONLY valid JSON:
             ValueError: If decomposition fails after max_retries
         
         Example:
-            >>> decomposer = QueryDecomposer(api_key="sk-...")
+            >>> decomposer = QueryDecomposer()
             >>> decomposer.decompose("What is machine learning and its applications?")
             ['What is machine learning?', 'What are applications of machine learning?']
         """
@@ -230,35 +218,32 @@ Respond with ONLY valid JSON:
                 return [query]
         
         # Attempt decomposition with retries
+        kwargs = {"model": self.model}
+        if self.host:
+            kwargs["host"] = self.host
+
         for attempt in range(self.max_retries):
             try:
                 logger.info(f"Decomposing query (attempt {attempt + 1}/{self.max_retries}): {query}")
-                
-                model = genai.GenerativeModel(
-                    model_name=self.model,
-                    system_instruction=self.prompts["system"]
+
+                parsed = generate_json(
+                    prompt=self.prompts["user"].format(question=query),
+                    system_instruction=self.prompts["system"],
+                    max_tokens=500,
+                    temperature=0.1,
+                    **kwargs,
                 )
-                
-                response = model.generate_content(
-                    self.prompts["user"].format(question=query),
-                    generation_config=genai.types.GenerationConfig(
-                        max_output_tokens=500,
-                        temperature=0.1
-                    )
-                )
-                
-                response_text = response.text
-                sub_queries = self._parse_json_response(response_text)
-                
+
+                sub_queries = self._validate_sub_queries(parsed)
                 if sub_queries:
                     logger.info(f"Successfully decomposed into {len(sub_queries)} sub-queries")
                     return sub_queries
-                
-                # Parse failed, will retry
-                logger.warning(f"Failed to parse JSON response: {response_text[:200]}")
-                
-            except Exception as e:
-                logger.error(f"API error on attempt {attempt + 1}: {e}")
+
+                # Parse/validation failed, will retry
+                logger.warning(f"Failed to get valid sub_queries from response: {parsed}")
+
+            except OllamaGenerationError as e:
+                logger.error(f"Ollama error on attempt {attempt + 1}: {e}")
                 if attempt == self.max_retries - 1:
                     raise
         
@@ -269,26 +254,23 @@ Respond with ONLY valid JSON:
 
 # Convenience function for one-off decomposition
 def decompose_query(query: str, 
-                    api_key: str,
                     language: str = "ar",
+                    model: str = DEFAULT_MODEL,
                     auto_detect: bool = True) -> List[str]:
     """
     Decompose a single query without creating a QueryDecomposer instance.
     
     Args:
         query (str): Question to decompose
-        api_key (str): OpenAI API key
         language (str): "ar" or "en"
+        model (str): Ollama model tag to use. Defaults to "qwen3:4b"
         auto_detect (bool): Whether to auto-detect complexity
     
     Returns:
         List[str]: Sub-queries
     
     Example:
-        >>> sub_queries = decompose_query(
-        ...     "ما هي أنواع الذكاء الاصطناعي؟",
-        ...     api_key="sk-..."
-        ... )
+        >>> sub_queries = decompose_query("ما هي أنواع الذكاء الاصطناعي؟")
     """
-    decomposer = QueryDecomposer(api_key=api_key, language=language)
+    decomposer = QueryDecomposer(language=language)
     return decomposer.decompose(query, auto_detect=auto_detect)

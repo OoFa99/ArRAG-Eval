@@ -24,7 +24,8 @@ import sqlite3
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import hashlib
-import google.generativeai as genai
+
+from src.agent.ollama_client import generate_json, DEFAULT_MODEL, OllamaGenerationError
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +148,8 @@ class LLMJudge:
     """
     
     def __init__(self,
-                 api_key: str,
-                 model: str = "gemini-3.5-flash",
+                 model: str = DEFAULT_MODEL,
+                 host: Optional[str] = None,
                  language: str = "ar",
                  use_cache: bool = True,
                  cache_dir: str = ".cache"):
@@ -156,14 +157,15 @@ class LLMJudge:
         Initialize LLM judge.
         
         Args:
-            api_key: Google Generative AI API key
-            model: Model to use (gemini-3.5-flash recommended)
+            model: Ollama model tag to use. Defaults to "qwen3:4b".
+            host: Ollama server URL. Defaults to the ollama_client module
+                  default (http://localhost:11434).
             language: "ar" for Arabic, "en" for English
             use_cache: Whether to cache judge decisions
             cache_dir: Directory for cache database
         """
-        genai.configure(api_key=api_key)
         self.model = model
+        self.host = host
         self.language = language
         self.use_cache = use_cache
         
@@ -306,61 +308,37 @@ Rules:
 Respond ONLY with valid JSON:
 {{"questions": ["question 1", "question 2", ...]}}"""
             }
+
             
-    def _call_llm(self, prompt: str, retries: int = 2) -> Optional[str]:
+    def _call_llm(self, prompt: str) -> Optional[Dict[str, Any]]:
         """
-        Call the LLM with retry logic.
-            
+        Call the local LLM and parse its response as JSON.
+
+        Uses Ollama's native JSON mode (format="json"), so the model is
+        constrained to emit valid JSON — retries on transient failures are
+        handled inside OllamaClient itself, so this is a thin wrapper.
+
         Args:
             prompt: The prompt to send
-            retries: Number of retry attempts
-            
-        Returns:
-            LLM response or None if failed
-        """
-        for attempt in range(retries):
-            try:
-                model = genai.GenerativeModel(model_name=self.model)
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        max_output_tokens=500,
-                        temperature=0.1
-                    )
-                )
-                return response.text
-            except Exception as e:
-                logger.error(f"LLM API error on attempt {attempt + 1}: {e}")
-                if attempt == retries - 1:
-                    return None
-        return None
 
-    def _parse_json_response(self, response: str) -> Optional[dict]:
-        """
-        Parse LLM response as JSON.
-        
-        Args:
-            response: The raw LLM response string
-        
         Returns:
-            Parsed JSON as dict or None if parsing fails
-        """
-        if not response:
-            return None
-        
+            Parsed JSON dict, or None if generation/parsing failed
+        """        
+        kwargs = {"model": self.model}
+        if self.host:
+            kwargs["host"] = self.host
+
         try:
-            return json.loads(response)
-        except json.JSONDecodeError as e:
-            import re
-            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group(1))
-                except json.JSONDecodeError:
-                    logger.error(f"Failed to parse JSON from LLM response: {response[:200]}")
-                    return None
-        
-        return None
+            return generate_json(
+                prompt=prompt,
+                max_tokens=500,
+                temperature=0.1,
+                **kwargs,
+            )
+        except OllamaGenerationError as e:
+            logger.error(f"Ollama call failed: {e}")
+            return None
+
 
     def is_claim_supported(self, claim: str, context: str) -> bool:
         """
@@ -387,8 +365,7 @@ Respond ONLY with valid JSON:
         )
         
         # Call LLM
-        response = self._call_llm(prompt)
-        parsed = self._parse_json_response(response)
+        parsed = self._call_llm(prompt)
         
         if parsed is None:
             logger.warning(f"Failed to parse claim support response")
@@ -433,8 +410,7 @@ Respond ONLY with valid JSON:
         )
         
         # Call LLM
-        response = self._call_llm(prompt)
-        parsed = self._parse_json_response(response)
+        parsed = self._call_llm(prompt)
         
         if parsed is None:
             logger.warning(f"Failed to parse chunk relevance response")
@@ -472,8 +448,7 @@ Respond ONLY with valid JSON:
         prompt = self.prompts["decompose_claims"].format(answer=answer)
         
         # Call LLM
-        response = self._call_llm(prompt)
-        parsed = self._parse_json_response(response)
+        parsed = self._call_llm(prompt)
         
         if parsed is None:
             logger.warning(f"Failed to decompose answer into claims")
@@ -516,8 +491,7 @@ Respond ONLY with valid JSON:
         )
         
         # Call LLM
-        response = self._call_llm(prompt)
-        parsed = self._parse_json_response(response)
+        parsed = self._call_llm(prompt)
         
         if parsed is None:
             logger.warning(f"Failed to generate questions")
