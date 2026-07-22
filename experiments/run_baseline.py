@@ -1,4 +1,3 @@
-# run_baseline.py
 import os
 import json
 from dotenv import load_dotenv
@@ -7,13 +6,10 @@ from src.data.corpus_download import load_arcd, load_wikipedia
 from src.data.preprocessing import preprocess_corpus
 from src.chunking.strategies import chunk_fixed_size
 from src.agent.pipeline import ArRAGPipeline
-
-# New imports for Qdrant
 from src.retrieval.qdrant_store import create_qdrant_store
 
 # Load environment variables
 load_dotenv()
-GEMINI_KEY = os.getenv('GOOGLE_GENAI_API_KEY')
 
 # 1. Load data
 arcd = load_arcd()
@@ -43,11 +39,15 @@ vector_store = create_qdrant_store(
 # Add documents (idempotent)
 vector_store.add_documents(chunks, document_id="wikipedia_corpus")
 
-# 5. Create pipeline
+# 5. Create pipeline (LLM calls run against local Ollama — config.llm_model,
+#    default "qwen3:4b" — no API key needed)
+print(f"Using Ollama model: {config.llm_model} @ {config.ollama_host}")
+print("Make sure `ollama serve` is running and you've pulled the model:")
+print(f"  ollama pull {config.llm_model}")
+
 pipeline = ArRAGPipeline(
     config=config,
     vector_store=vector_store,
-    api_key=GEMINI_KEY
 )
 
 # 6. Run evaluation
@@ -55,7 +55,7 @@ test_data = arcd["validation"][:20]
 results = pipeline.run_batch(test_data["question"])
 
 # 7. Save outputs
-with open("baseline_outputs.json", "w") as f:
+with open("baseline_outputs.json", "w", encoding="utf-8") as f:
     json.dump(results, f, indent=2, ensure_ascii=False)
 
 print("✓ Complete. Review baseline_outputs.json manually.")
