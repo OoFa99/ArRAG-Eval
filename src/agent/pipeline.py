@@ -14,7 +14,6 @@ import logging
 
 from langgraph.graph import StateGraph, END
 
-import src.config
 from src.agent.decomposer import decompose_query
 from src.agent.ollama_client import generate_json, generate_text, OllamaGenerationError
 from src.config import ExperimentConfig
@@ -201,14 +200,14 @@ Answer these two questions:
 1. Can this question be answered from the provided context?
 2. What information is missing (if any)?
 
-Respond in JSON format:
-{{"is_sufficient": true/false, "missing_info": "what is missing, or 'nothing' if complete"}}"""
+Respond in JSON format. "missing_info" must be ONE short sentence (15 words or fewer), or "nothing" if complete:
+{{"is_sufficient": true/false, "missing_info": "brief note, 15 words max, or 'nothing'"}}"""
     
     try:
         parsed = generate_json(
             prompt=sufficiency_prompt,
             model=config.llm_model,
-            max_tokens=200,
+            max_tokens=350,
             temperature=0.1,
         )
 

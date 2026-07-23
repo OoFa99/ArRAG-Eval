@@ -195,8 +195,8 @@ class LLMJudge:
 - إذا كان الادعاء غير مذكور في السياق → لا
 - الادعاءات الجزئية المدعومة → لا (يجب الدعم الكامل)
 
-الرد بصيغة JSON فقط:
-{{"supported": true/false, "reasoning": "السبب المختصر"}}""",
+الرد بصيغة JSON فقط. حقل "reasoning" يجب ألا يتجاوز 10 كلمات:
+{{"supported": true/false, "reasoning": "سبب مختصر جدا (10 كلمات كحد أقصى)"}}""",
                 
                 "chunk_relevance": """أنت محلل لملاءمة المعلومات.
 
@@ -211,20 +211,21 @@ class LLMJudge:
 - الفقرات ذات الصلة تحتوي على معلومات استخدمت في الإجابة
 - الفقرات غير ذات الصلة لا تساعد في الإجابة على السؤال
 
-الرد بصيغة JSON فقط:
-{{"relevant": true/false, "reasoning": "لماذا أو لماذا لا"}}""",
+الرد بصيغة JSON فقط. حقل "reasoning" يجب ألا يتجاوز 10 كلمات:
+{{"relevant": true/false, "reasoning": "سبب مختصر جدا (10 كلمات كحد أقصى)"}}""",
                 
                 "decompose_claims": """أنت متخصص في تحليل الجمل المعقدة.
 
 الإجابة: "{answer}"
 
-قسّم الإجابة إلى ادعاءات ذرية بسيطة (مستقلة عن بعضها).
+قسّم الإجابة إلى ادعاءات ذرية بسيطة (مستقلة عن بعضها)، بحد أقصى 6 ادعاءات.
 
 قواعد:
 - كل ادعاء يجب أن يكون جملة واحدة بسيطة
 - تجنب الادعاءات المركبة (استخدم و/أو منفصلة)
 - شمل الأرقام والحقائق الملموسة
 - لا تشمل العبارات الزائدة
+- 6 ادعاءات كحد أقصى — إذا كانت الإجابة تحتوي على أكثر من ذلك، اختر الأهم
 
 الرد بصيغة JSON فقط:
 {{"claims": ["الادعاء 1", "الادعاء 2", ...]}}""",
@@ -260,8 +261,8 @@ Notes:
 - If claim is not mentioned → no
 - Partially supported claims → no (must be fully supported)
 
-Respond ONLY with valid JSON:
-{{"supported": true/false, "reasoning": "brief reason"}}""",
+Respond ONLY with valid JSON. The "reasoning" field must be 10 words or fewer:
+{{"supported": true/false, "reasoning": "very brief reason (max 10 words)"}}""",
                 
                 "chunk_relevance": """You are an information relevance analyzer.
 
@@ -276,20 +277,21 @@ Notes:
 - Relevant chunks contain information used in the answer
 - Irrelevant chunks don't help answer the question
 
-Respond ONLY with valid JSON:
-{{"relevant": true/false, "reasoning": "why or why not"}}""",
+Respond ONLY with valid JSON. The "reasoning" field must be 10 words or fewer:
+{{"relevant": true/false, "reasoning": "very brief reason (max 10 words)"}}""",
                 
                 "decompose_claims": """You are a sentence decomposition expert.
 
 Answer: "{answer}"
 
-Decompose the answer into simple atomic claims (independent of each other).
+Decompose the answer into simple atomic claims (independent of each other), at most 6 claims.
 
 Rules:
 - Each claim should be one simple sentence
 - Avoid compound claims (use separate and/or)
 - Include numbers and concrete facts
 - Exclude filler phrases
+- Maximum 6 claims — if the answer has more, keep only the most important ones
 
 Respond ONLY with valid JSON:
 {{"claims": ["claim 1", "claim 2", ...]}}""",
@@ -310,7 +312,7 @@ Respond ONLY with valid JSON:
             }
 
             
-    def _call_llm(self, prompt: str) -> Optional[Dict[str, Any]]:
+    def _call_llm(self, prompt: str, max_tokens: int = 400) -> Optional[Dict[str, Any]]:
         """
         Call the local LLM and parse its response as JSON.
 
@@ -320,6 +322,9 @@ Respond ONLY with valid JSON:
 
         Args:
             prompt: The prompt to send
+            max_tokens: Token budget for this specific decision type.
+                Callers pass a value sized to what the response actually
+                needs to contain (see class docstring).
 
         Returns:
             Parsed JSON dict, or None if generation/parsing failed
@@ -331,7 +336,7 @@ Respond ONLY with valid JSON:
         try:
             return generate_json(
                 prompt=prompt,
-                max_tokens=500,
+                max_tokens=max_tokens,
                 temperature=0.1,
                 **kwargs,
             )
@@ -448,7 +453,7 @@ Respond ONLY with valid JSON:
         prompt = self.prompts["decompose_claims"].format(answer=answer)
         
         # Call LLM
-        parsed = self._call_llm(prompt)
+        parsed = self._call_llm(prompt, max_tokens=800)
         
         if parsed is None:
             logger.warning(f"Failed to decompose answer into claims")

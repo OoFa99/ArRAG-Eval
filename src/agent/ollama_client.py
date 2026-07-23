@@ -220,33 +220,51 @@ class OllamaClient:
                       system_instruction: Optional[str] = None,
                       temperature: Optional[float] = None,
                       max_tokens: Optional[int] = None,
-                      think: Optional[bool] = None) -> Optional[Dict[str, Any]]:
+                      think: Optional[bool] = None,
+                      retry_on_truncation: bool = True,
+                      truncation_retry_multiplier: float = 1.8) -> Optional[Dict[str, Any]]:
         """
         Generate a response constrained to valid JSON and parse it.
 
-        Uses Ollama's native `format="json"` mode, so — unlike the old
-        Gemini prompts — we don't need markdown-fence stripping or regex
-        fallback parsing. This only returns None if the call fails outright
-        or (rarely) the constrained output doesn't match valid JSON.
+        Uses Ollama's native `format="json"` mode, so we don't need 
+        markdown-fence stripping or regex fallback parsing.
+        This only returns None if the call fails outright or (rarely) 
+        the constrained output doesn't match valid JSON.
         """
-        try:
-            text = self.generate(
-                prompt=prompt,
-                system_instruction=system_instruction,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                json_mode=True,
-                think=think
-            )
-        except OllamaGenerationError as e:
-            logger.warning(f"generate_json: generation failed: {e}")
-            return None
+        attempted_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
+        max_attempts = 2 if retry_on_truncation else 1
         
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse failed despite json_mode=True: {e}. Raw: {text[:200]}")
-            return None
+        last_raw = ""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                text = self.generate(
+                    prompt=prompt,
+                    system_instruction=system_instruction,
+                    temperature=temperature,
+                    max_tokens=attempted_tokens,
+                    json_mode=True,
+                    think=think
+                )
+            except OllamaGenerationError as e:
+                logger.warning(f"generate_json: generation failed: {e}")
+                return None
+            
+            last_raw = text
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                if attempt < max_attempts:
+                    attempted_tokens = int(attempted_tokens * truncation_retry_multiplier)
+                    logger.warning(
+                        f"JSON parse failed (likely truncated at max_tokens="
+                        f"{max_tokens if max_tokens is not None else self.default_max_tokens}): "
+                        f"{e}. Retrying with max_tokens={attempted_tokens}. Raw: {text[:200]}"
+                    )
+                    continue
+                logger.warning(
+                    f"JSON parse failed despite json_mode=True and a retry: {e}. Raw: {last_raw[:200]}"
+                )
+                return None
 
 # Shared client + module-level convenience functions
 _default_client: Optional[OllamaClient] = None
@@ -281,12 +299,14 @@ def generate_json(prompt: str,
                    host: str = DEFAULT_HOST,
                    temperature: Optional[float] = None,
                    max_tokens: Optional[int] = None,
-                   think: Optional[bool] = None) -> Optional[Dict[str, Any]]:
+                   think: Optional[bool] = None,
+                   retry_on_truncation: bool = True) -> Optional[Dict[str, Any]]:
     """One-off JSON generation using the shared client."""
     return get_client(model=model, host=host).generate_json(
         prompt=prompt,
         system_instruction=system_instruction,
         temperature=temperature,
         max_tokens=max_tokens,
-        think=think
+        think=think,
+        retry_on_truncation=retry_on_truncation
     )
