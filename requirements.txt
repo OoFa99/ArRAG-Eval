@@ -1,0 +1,43 @@
+# ArRAG-Eval — Python dependencies
+# Local stack: Ollama (qwen3:4b) for generation/judging, Qdrant for vector
+# storage, MLFlow for experiment tracking. Tested with Python 3.10+.
+
+# ---- Config / environment ----
+pydantic>=2.0,<3.0        # config.py uses model_dump()/model_dump_json() — pydantic v2 API
+python-dotenv>=1.0.0
+
+# ---- Data ----
+datasets>=2.19.0
+
+# ---- Chunking / Embeddings ----
+numpy>=1.24
+sentence-transformers>=2.7.0   # pulls in torch + transformers
+
+# ---- Retrieval ----
+qdrant-client>=1.9.0
+rank-bm25>=0.2.2
+
+# ---- Agentic pipeline ----
+langgraph>=0.1.0
+ollama>=0.4.0           # 0.4+ supports the `think` param used to disable Qwen3 reasoning mode
+                        # ollama_client.py falls back gracefully if you're on older versions, but you won't get the same agentic behavior
+
+# ---- Evaluation / Experiment tracking ----
+mlflow==3.12.0
+
+# ---- Ablation analysis notebook ----
+jupyter>=1.0.0
+ipykernel>=6.29.0
+pandas>=2.0
+matplotlib>=3.8
+
+# ---- Testing ----
+pytest>=8.0
+requests>=2.31.0
+
+# ---- Optional: GPU-accelerated PyTorch ----
+# sentence-transformers pulls in a default torch build, which may land as
+# CPU-only depending on your platform. If embeddings are slow, install the
+# CUDA build matching your GPU/driver BEFORE installing this file, e.g. for
+# a GTX 1650 Ti on CUDA 12.1:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121

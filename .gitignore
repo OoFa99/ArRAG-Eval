@@ -25,4 +25,5 @@ mlruns/**
 *.db
 *.json
 *.txt
+!requirements.txt
 .cache/
