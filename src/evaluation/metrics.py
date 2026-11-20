@@ -311,6 +311,13 @@ class ContextPrecision:
                 score=0.0,
                 details={"reason": "no context"}
             )
+
+        if not answer.strip():
+            return MetricResult(
+                metric_name="context_precision",
+                score=0.0,
+                details={"reason": "empty answer"}
+            )
         
         # Step 1: Determine relevance for each chunk
         relevances = []
