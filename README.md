@@ -24,7 +24,7 @@ Use Python 3.12 and run these commands from the repository root. The default ins
 | Run experiments and notebooks | `uv sync --locked --group notebook` |
 | Use both optional groups | `uv sync --locked --group test --group notebook` |
 
-Run the tests with `uv run --locked --group test python -m pytest -q -rs`. The integration test skips if Ollama or Qdrant is unreachable. Open the notebook with `uv run --locked --group notebook jupyter lab`.
+Run the offline tests with `uv run --locked --group test python -m pytest -q -m "not integration"` and lint with `uv run --locked --group test ruff check`. GitHub Actions runs these checks on pushes and pull requests. Open the notebook with `uv run --locked --group notebook jupyter lab`.
 
 If you use pip, install the exported core requirements in a fresh environment.
 
@@ -62,6 +62,16 @@ The check uses the baseline settings and reads the Ollama model list, the Qdrant
 | `python -m experiments.run_baseline_metrics` | Scores the baseline and writes `detailed_scores.json`, reusing `baseline_metrics_outputs.json` if present. |
 | `python -m experiments.run_ablation` | Builds or reuses one index for all three retrieval configurations, scores the same questions for each, and logs three MLflow runs. |
 | `python -m scripts.create_ablation_table` | Reads the experiment configured in the script and writes `ablation_table.md`. |
+
+### Live pipeline smoke test
+
+Start Qdrant and Ollama, then run the smoke test explicitly. The test requires successful HTTP responses from both services and uses a small Arabic corpus from the repository. It creates a temporary Qdrant collection and removes it when the test finishes.
+
+```powershell
+uv run --locked --group test python -m pytest -q -m integration --run-integration
+```
+
+On GitHub, run **Live pipeline smoke test** manually from the **Actions** tab. That workflow starts both services and pulls the smaller `qwen3:0.6b` model for the CPU runner.
 
 ### Optional NVIDIA GPU setup on Windows
 

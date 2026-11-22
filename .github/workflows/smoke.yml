@@ -1,0 +1,43 @@
+name: Live pipeline smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - "6333:6333"
+      ollama:
+        image: ollama/ollama:latest
+        ports:
+          - "11434:11434"
+    env:
+      ARRAG_SMOKE_OLLAMA_MODEL: "qwen3:0.6b"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.23"
+      - name: Prepare services
+        env:
+          OLLAMA_CONTAINER_ID: ${{ job.services.ollama.id }}
+        run: |
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --max-time 5 http://localhost:6333/collections
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --max-time 5 http://localhost:11434/api/tags
+          docker exec "$OLLAMA_CONTAINER_ID" ollama pull "$ARRAG_SMOKE_OLLAMA_MODEL"
+      - name: Install dependencies with CPU PyTorch
+        run: |
+          uv venv --python 3.12
+          uv export --locked --group test --no-emit-project --no-hashes --output-file "$RUNNER_TEMP/arrag-constraints.txt"
+          uv pip install -r pyproject.toml --group test --torch-backend cpu -c "$RUNNER_TEMP/arrag-constraints.txt"
+          uv pip check
+      - name: Run live pipeline test
+        run: uv run --no-sync python -m pytest -q -m integration --run-integration

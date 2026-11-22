@@ -20,6 +20,7 @@ dependencies = [
 test = [
     "pytest>=8.0",
     "requests>=2.31",
+    "ruff==0.14.10",
 ]
 notebook = [
     "ipykernel>=6.29",
@@ -31,3 +32,10 @@ notebook = [
 [tool.uv]
 package = false
 default-groups = []
+
+[tool.pytest.ini_options]
+markers = ["integration: live checks requiring Ollama, Qdrant, and the embedding model"]
+
+[tool.ruff.lint]
+# Start with syntax errors and undefined names across the existing code.
+select = ["E9", "F63", "F7", "F82"]

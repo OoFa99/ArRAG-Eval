@@ -26,8 +26,11 @@ The next milestone is a reproducible comparison of BM25, dense, and hybrid retri
 - [x] Verify optional GPU embeddings on Windows. The GTX 1650 Ti ran the default model with driver 621.14 and PyTorch 2.15.0 with CUDA 13.2. [GPU setup](README.md#optional-nvidia-gpu-setup-on-windows)
 - [x] Add a startup check for service status, the required Ollama model, dataset cache paths, and Qdrant vector schema. [Startup command](scripts/check_startup.py)
 - [ ] Pin the Qdrant image and record the Ollama model identity when preparing reproducible experiments.
-- [ ] Add CI for a clean install, dependency checks, linting, and offline tests. Keep a separate end-to-end smoke test using a small versioned fixture, strict HTTP status checks, and an isolated collection.
-- [ ] Make the existing Recall@k helpers discoverable through real tests. Cover repeated results, empty labels, and rank cutoffs. Add regression tests alongside each correctness fix below.
+- [x] Add CI for locked installs, dependency checks, linting, and offline tests. [CI workflow](.github/workflows/ci.yml)
+- [x] Add a manual live smoke test with a small versioned fixture, strict HTTP status checks, and a disposable Qdrant collection. Verified locally with Ollama and Qdrant. [Smoke workflow](.github/workflows/smoke.yml)
+- [x] Cover Recall@k with discoverable tests for repeated results, empty inputs and labels, and single and multiple cutoffs. [Recall tests](tests/test_recall.py)
+
+Add regression tests alongside each correctness fix below.
 
 ### Index identity and consistency
 
