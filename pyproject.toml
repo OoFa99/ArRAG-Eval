@@ -1,0 +1,33 @@
+[project]
+name = "arrag-eval"
+version = "0.1.0"
+description = "Evaluate Arabic retrieval-augmented generation."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "datasets>=2.19",
+    "langgraph>=0.1",
+    "mlflow==3.12.0",
+    "numpy>=1.24",
+    "ollama>=0.4",
+    "pydantic>=2.0,<3.0",
+    "python-dotenv>=1.0",
+    "qdrant-client>=1.9",
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=2.7",
+]
+
+[dependency-groups]
+test = [
+    "pytest>=8.0",
+    "requests>=2.31",
+]
+notebook = [
+    "ipykernel>=6.29",
+    "jupyter>=1.0",
+    "matplotlib>=3.8",
+    "pandas>=2.0",
+]
+
+[tool.uv]
+package = false
+default-groups = []

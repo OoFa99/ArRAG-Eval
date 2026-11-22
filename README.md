@@ -15,13 +15,34 @@ The scored runners use the ARCD questions without using the reference answers. T
 
 ## Run locally
 
-Install dependencies from the repository root.
+Use Python 3.12 and run these commands from the repository root. The default installation includes the experiment pipeline. Tests and notebooks are opt-in. [uv dependency groups](https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups)
+
+| What you need | Setup |
+| --- | --- |
+| Run experiments | `uv sync --locked` |
+| Run experiments and tests | `uv sync --locked --group test` |
+| Run experiments and notebooks | `uv sync --locked --group notebook` |
+| Use both optional groups | `uv sync --locked --group test --group notebook` |
+
+Run the tests with `uv run --locked --group test python -m pytest -q -rs`. The integration test skips if Ollama or Qdrant is unreachable. Open the notebook with `uv run --locked --group notebook jupyter lab`.
+
+If you use pip, install the exported core requirements in a fresh environment.
 
 ```powershell
-python -m venv .myenv
-.\.myenv\Scripts\Activate.ps1
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+python -m pip check
 ```
+
+To update dependencies, edit `pyproject.toml`, refresh the shared lock, and regenerate the core pip export. Use `uv lock --upgrade` when refreshing every pin. [uv export reference](https://docs.astral.sh/uv/reference/cli/#uv-export)
+
+```powershell
+uv lock
+uv export --locked --no-default-groups --no-emit-project --no-hashes --output-file requirements.txt
+```
+
+The default Windows setup was verified with CPU PyTorch. The [optional GPU setup](#optional-nvidia-gpu-setup-on-windows) uses a separate environment for CUDA embeddings.
 
 Run Qdrant at `http://localhost:6333`. In a separate terminal, start Ollama at `http://localhost:11434` if it is not running, then pull the default generation and judge model with `ollama pull qwen3:4b`.
 
@@ -31,13 +52,47 @@ docker run -p 6333:6333 qdrant/qdrant:latest
 
 The first run may download datasets and the embedding model. With the commands below run from the repository root, the corpus loader looks under the literal relative directory `./~/arrag-eval/data`.
 
+Run `uv run --locked python -m scripts.check_startup` before starting an experiment. With an activated pip environment, use `python -m scripts.check_startup`.
+
+The check uses the baseline settings and reads the Ollama model list, the Qdrant collection schema, and local dataset cache metadata. A missing cache or collection is a first-run warning. An unreachable service, a missing Ollama model, or an incompatible collection returns exit code 1. For the default E5 model, the collection should have a single unnamed 384-dimensional dense vector with Cosine distance. Verifying which model produced existing vectors requires separate index metadata.
+
 | Command | What it does |
 | --- | --- |
 | `python -m experiments.run_baseline` | Runs hybrid retrieval for 20 questions and writes `baseline_outputs.json`. |
 | `python -m experiments.run_baseline_metrics` | Scores the baseline and writes `detailed_scores.json`, reusing `baseline_metrics_outputs.json` if present. |
 | `python -m experiments.run_ablation` | Builds or reuses one index for all three retrieval configurations, scores the same questions for each, and logs three MLflow runs. |
 | `python -m scripts.create_ablation_table` | Reads the experiment configured in the script and writes `ablation_table.md`. |
-| `python -m pytest -q -rs` | Runs the local integration smoke test when present. The test skips if Ollama or Qdrant is unreachable. |
+
+### Optional NVIDIA GPU setup on Windows
+
+Verified on a GeForce GTX 1650 Ti with 4 GB of VRAM, NVIDIA driver 621.14, and Python 3.12.3. The default embedding model, `intfloat/multilingual-e5-small`, encoded two Arabic texts as 384-dimensional vectors on `cuda:0`. PyTorch reported 450 MiB of peak allocated GPU memory for this check.
+
+Check your card and driver with `nvidia-smi`. The commands below use Python 3.12 and the PyTorch 2.15.0 wheel built with CUDA 13.2. The CUDA version shown by `nvidia-smi` is the driver's supported version. `torch.version.cuda` reports the version used to build the wheel. [PyTorch Windows CUDA wheels](https://download.pytorch.org/whl/cu132/torch/) · [NVIDIA CUDA driver compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/latest/minor-version-compatibility.html)
+
+```powershell
+uv venv .venv-gpu --python 3.12
+uv pip install --python .venv-gpu/Scripts/python.exe --index-url https://download.pytorch.org/whl/cu132 --no-deps "torch==2.15.0+cu132"
+uv pip install --python .venv-gpu/Scripts/python.exe -r requirements.txt
+uv pip check --python .venv-gpu/Scripts/python.exe
+```
+
+Test the same embedding model used by the default pipeline. The first run may download its weights.
+
+```powershell
+@'
+import torch
+from sentence_transformers import SentenceTransformer
+
+assert torch.cuda.is_available(), f"CUDA unavailable in PyTorch {torch.__version__}"
+model = SentenceTransformer("intfloat/multilingual-e5-small")
+embedding = model.encode(["query: Cairo"], convert_to_tensor=True)
+assert embedding.device.type == "cuda", f"Embedding is on {embedding.device}"
+print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0))
+print(embedding.shape, embedding.device)
+'@ | .\.venv-gpu\Scripts\python.exe -
+```
+
+Use the GPU environment's Python for commands that should use this PyTorch build.
 
 ## Reading the results
 

@@ -8,7 +8,7 @@ The next milestone is a reproducible comparison of BM25, dense, and hybrid retri
 | 2. Build the benchmark | Versioned questions, verified evidence, and reference-based metrics | Stable document and chunk IDs |
 | 3. Rerun the baseline | A paired, budget-controlled comparison with traceable MLflow runs | Milestones 1 and 2 |
 | 4. Test retrieval and agent changes | Isolated experiments for chunking, reranking, decomposition, and retries | A reproducible baseline |
-| 5. Improve maintainability and the demo | One experiment workflow and an evidence-first Arabic UI | Stable result and artifact formats |
+| 5. Improve maintainability | One experiment workflow with reproducible reports | Stable result and artifact formats |
 
 ## Audit snapshot
 
@@ -21,9 +21,11 @@ The next milestone is a reproducible comparison of BM25, dense, and hybrid retri
 
 ### Environment and tests
 
-- [ ] Define supported Python versions and create a tested dependency lock. Resolve the `transformers`/`huggingface-hub` and MLflow/Starlette conflicts with a compatible dependency set.
-- [ ] Split core, development, notebook, and optional demo dependencies. Include Gradio in the demo dependencies. Document and verify CPU and optional GPU setup separately.
-- [ ] Pin the Qdrant image and record the Ollama model identity. Add a startup check for service status, required models, data paths, and index compatibility.
+- [x] Support Python 3.12 and lock a compatible dependency set. Verified a fresh Windows environment with `pip check` and pytest collection. [Dependency lock](uv.lock)
+- [x] Split core, test, and notebook dependencies and verify a fresh Windows core install. Keep a pip-compatible export for core. [Dependency groups](pyproject.toml)
+- [x] Verify optional GPU embeddings on Windows. The GTX 1650 Ti ran the default model with driver 621.14 and PyTorch 2.15.0 with CUDA 13.2. [GPU setup](README.md#optional-nvidia-gpu-setup-on-windows)
+- [x] Add a startup check for service status, the required Ollama model, dataset cache paths, and Qdrant vector schema. [Startup command](scripts/check_startup.py)
+- [ ] Pin the Qdrant image and record the Ollama model identity when preparing reproducible experiments.
 - [ ] Add CI for a clean install, dependency checks, linting, and offline tests. Keep a separate end-to-end smoke test using a small versioned fixture, strict HTTP status checks, and an isolated collection.
 - [ ] Make the existing Recall@k helpers discoverable through real tests. Cover repeated results, empty labels, and rank cutoffs. Add regression tests alongside each correctness fix below.
 
@@ -91,13 +93,12 @@ The next milestone is a reproducible comparison of BM25, dense, and hybrid retri
 
 **Done when** each experiment changes a single component and reports its effects on evidence recall, answer quality, tokens, model calls, and latency.
 
-## 5. Improve maintainability and the demo
+## 5. Improve maintainability
 
 - [ ] Consolidate duplicate experiment setup into one entry point for loading, preprocessing, indexing, generation, scoring, and reporting. Keep the scripts importable without starting work. Document supported commands in the README.
 - [ ] Make config fields drive behavior or remove inactive options such as `chroma` and `use_judge`. Migrate deprecated Pydantic APIs, validate overlap and RRF settings, and add tests for effective configuration.
 - [ ] Replace filename-only result caches with run fingerprints. Write resumable per-question outputs keyed by question ID, and version the output schema. Keep comparison manifests and small fixtures trackable by narrowing blanket ignore patterns.
 - [ ] Profile embedding and judge calls, reuse initialized models, and batch independent work where practical. Keep concurrency bounded for the local Ollama instance and make timing visible per stage.
-- [ ] Add right-to-left display, clickable sources, per-configuration errors, and progress feedback in the demo. Show which sub-query retrieved each passage, what went into the final prompt, and how much time each strategy took.
 - [ ] Retire superseded prototypes and outdated comments after their tested replacements land. Add a short workflow for benchmark contributors. If the project expands into another domain, first define a corpus and annotation interface with provenance, licensing, and a domain-specific benchmark.
 
-**Done when** a contributor can install the project, run a small reproducible comparison, inspect its evidence in the demo, and regenerate its report using documented commands.
+**Done when** a contributor can install the project, run a small reproducible comparison, inspect its saved evidence, and regenerate its report using documented commands.
