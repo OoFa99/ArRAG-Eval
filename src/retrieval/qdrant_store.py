@@ -22,6 +22,8 @@ Setup (Docker):
   Then initialize: store = VectorStoreQdrant()
 """
 
+from collections.abc import Iterable
+from itertools import chain
 import logging
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
@@ -31,6 +33,12 @@ from rank_bm25 import BM25Okapi
 import uuid
 
 logger = logging.getLogger(__name__)
+BM25_SCROLL_PAGE_SIZE = 1_000
+
+
+def _chunk_id(point_id: int | str, payload: dict[str, Any]) -> str:
+    """Use the stored chunk ID, falling back to the ID of a legacy point."""
+    return str(payload.get("chunk_id") or point_id)
 
 
 class VectorStoreQdrant:
@@ -175,37 +183,40 @@ class VectorStoreQdrant:
             logger.info(f"✓ Created collection: {self.collection_name}")
     
     def _load_existing_documents(self):
-        """Load existing documents from Qdrant into BM25."""
-        try:
-            # Get all points in collection
-            points, _ = self.client.scroll(
+        """Rebuild BM25 after reading every page of the collection."""
+        chunks = []
+        sources = set()
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
                 collection_name=self.collection_name,
-                limit=10000  # Adjust if you have more than 10K chunks
+                limit=BM25_SCROLL_PAGE_SIZE,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
             )
-            
-            if points:
-                print(f"Loading {len(points)} existing points into BM25...")
-                
-                for point in points:
-                    # Reconstruct document from payload
-                    chunk_id = point.id
-                    chunk_text = point.payload.get('text', '')
-                    
-                    self.corpus.append(chunk_text)
-                    self.corpus_ids.append(chunk_id)
-                    
-                    # Track document source
-                    source = point.payload.get('source_document', '')
-                    if source:
-                        self.added_documents.add(source)
-                
-                # Build BM25
-                if self.corpus:
-                    tokenized = [self._tokenize_arabic(c) for c in self.corpus]
-                    self.bm25 = BM25Okapi(tokenized)
-                    logger.info(f"✓ BM25 built from {len(self.corpus)} chunks")
-        except Exception as e:
-            logger.debug(f"No existing documents: {e}")
+            for point in points:
+                payload = point.payload or {}
+                chunks.append((_chunk_id(point.id, payload), payload.get("text") or ""))
+                source = payload.get("source_document")
+                if source:
+                    sources.add(source)
+
+            if offset is None:
+                break
+
+        self._set_bm25_index(chunks)
+        self.added_documents = sources
+        logger.info("Loaded %d chunks from Qdrant for BM25", len(chunks))
+
+    def _set_bm25_index(self, chunks: Iterable[tuple[str, str]]) -> None:
+        # Stable corpus order gives BM25 the same tie order after a reload.
+        ordered_chunks = sorted(chunks)
+        corpus = [text for _, text in ordered_chunks]
+        tokenized = [self._tokenize_arabic(text) for text in corpus]
+        self.bm25 = BM25Okapi(tokenized) if any(tokenized) else None
+        self.corpus_ids = [chunk_id for chunk_id, _ in ordered_chunks]
+        self.corpus = corpus
     
     def add_documents(self, chunks: List[str], document_id: str):
         """
@@ -277,11 +288,7 @@ class VectorStoreQdrant:
             logger.debug(f"Upserted batch {batch_idx//batch_size + 1}")
         
         # ============ Step 4: Update BM25 index ============
-        self.corpus.extend(chunks)
-        self.corpus_ids.extend(chunk_ids)
-        
-        tokenized = [self._tokenize_arabic(c) for c in self.corpus]
-        self.bm25 = BM25Okapi(tokenized)
+        self._set_bm25_index(chain(zip(self.corpus_ids, self.corpus), zip(chunk_ids, chunks)))
         
         # Track document
         self.added_documents.add(document_id)
@@ -350,12 +357,11 @@ class VectorStoreQdrant:
         formatted = []
         for hit in search_results.points:
             # ScoredPoint object
-            point_id = hit.id
             score = hit.score
             payload = hit.payload or {}
             
             formatted.append({
-                "id": payload.get('chunk_id', str(point_id)),
+                "id": _chunk_id(hit.id, payload),
                 "score": float(score),
                 "text": payload.get('text', ''),
                 "source": payload.get('source_document', '')

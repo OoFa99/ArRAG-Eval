@@ -34,7 +34,7 @@ Add regression tests alongside each correctness fix below.
 
 ### Index identity and consistency
 
-- [ ] Use identical canonical chunk IDs for dense and BM25 results. Read the payload chunk ID when rebuilding BM25, paginate Qdrant scrolling, and verify hybrid ranks and scores match before and after reopening an index. [Retrieval store](src/retrieval/qdrant_store.py)
+- [x] Share canonical chunk IDs across dense and BM25 results, follow all Qdrant pages when rebuilding BM25, and keep tie order stable. Verified hybrid IDs, ranks, and scores across reopening. [Retrieval store](src/retrieval/qdrant_store.py) · [Restart tests](tests/test_qdrant_restart.py)
 - [ ] Use stable point and chunk IDs instead of Python's process-dependent `hash()`. Store article ID, title, URL, revision, section, offsets, original text, and the searchable representation.
 - [ ] Fingerprint corpus selection, preprocessing, chunking, embedding revision, and embedding input format. Use those fingerprints to select compatible collections so changed settings cannot silently reuse an older index.
 - [ ] Make index builds resumable and detect incomplete batches. Verify expected counts and mark an index ready only after all writes succeed. Test retries, partial writes, and compatibility errors.
